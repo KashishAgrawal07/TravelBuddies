@@ -1,0 +1,21 @@
+{
+    "name": "travelbuddies",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "start:backend": "npm --prefix backend run dev",
+        "start:frontend": "npm --prefix frontend run dev",
+        "start": "concurrently \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\""
+        
+    },
+    "devDependencies": {
+        "concurrently": "^8.2.2",
+        "vite": "^6.0.11"
+    },
+    "main": "index.js",
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "description": ""
+    
+}
