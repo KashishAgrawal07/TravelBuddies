@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+
 const CollaborationSchema = new mongoose.Schema(
   {
     tripName: {
@@ -16,18 +17,18 @@ const CollaborationSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
-    // ✅ Add these fields for itinerary storage
+    // ✅ Fixed: Use Object instead of Map for better compatibility
     days: {
       type: [String], // Store day names (e.g., ["Day 1", "Day 2"])
       default: [],
     },
     activities: {
-      type: Map, // Store activities per day
-      of: [String], // Each day will have an array of activities
+      type: mongoose.Schema.Types.Mixed, // ✅ Use Mixed type instead of Map
       default: {},
     },
   },
   { timestamps: true }
 );
+
 const Collaboration = mongoose.model("Collaboration", CollaborationSchema);
 export default Collaboration;

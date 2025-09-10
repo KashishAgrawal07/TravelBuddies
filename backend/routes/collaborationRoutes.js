@@ -1,5 +1,5 @@
 import express from 'express';
-import Collaboration from '../models/Collaboration.js'; // MongoDB Model
+import Collaboration from '../models/Collaboration.js';
 import { verifyToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 
@@ -9,23 +9,33 @@ const router = express.Router();
 router.post('/', verifyToken, async (req, res) => {
   try {
     const { tripName } = req.body;
-    const tripCode = Math.random().toString(36).substr(2, 6).toUpperCase(); // Generate random code
-    const newTrip = new Collaboration({ tripName, tripCode, members: [req.user.id] });
+    const tripCode = Math.random().toString(36).substr(2, 6).toUpperCase();
+    const newTrip = new Collaboration({ 
+      tripName, 
+      tripCode, 
+      members: [req.user.id],
+      days: [],
+      activities: {}
+    });
     await newTrip.save();
 
-    // Emit event to notify all connected users
-    req.app.get('io').emit('tripUpdated', newTrip);
+    console.log("✅ Trip created successfully:", newTrip);
+
+    // ✅ Emit to specific trip room instead of all users
+    const io = req.app.get('io');
+    io.to(tripCode).emit('tripUpdated', newTrip);
 
     res.json(newTrip);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    console.error("❌ Error creating trip:", error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
 // Join an existing trip
 router.post('/join', verifyToken, async (req, res) => {
   try {
-    console.log("🔵 Received request to join trip"); // ✅ Log request
+    console.log("🔵 Received request to join trip");
     console.log("Request Body:", req.body);
 
     const { tripCode } = req.body;
@@ -56,9 +66,17 @@ router.post('/join', verifyToken, async (req, res) => {
       console.log("⚠️ User is already in the trip.");
     }
 
-    req.app.get('io').emit('userJoinedNotification', { tripCode, username: user.name });
+    // ✅ Emit to specific trip room
+    const io = req.app.get('io');
+    io.to(tripCode).emit('userJoinedNotification', { tripCode, username: user.name });
 
-    res.json({ message: "Successfully joined the trip!" });
+    res.json({ 
+      message: "Successfully joined the trip!", 
+      tripName: trip.tripName,
+      tripCode: trip.tripCode,
+      days: trip.days || [],
+      activities: trip.activities || {}
+    });
 
   } catch (error) {
     console.error("❌ Error in /join route:", error);
@@ -66,8 +84,7 @@ router.post('/join', verifyToken, async (req, res) => {
   }
 });
 
-
-
+// ✅ FIXED: Update itinerary route
 router.put('/update/:tripCode', verifyToken, async (req, res) => {
   try {
     const { tripCode } = req.params;
@@ -76,24 +93,10 @@ router.put('/update/:tripCode', verifyToken, async (req, res) => {
     console.log("🔵 Updating itinerary for trip:", tripCode);
     console.log("Received Data:", { days, activities });
 
-    if (!days || !activities) {
-      console.log("❌ Error: Missing days or activities in request");
-      return res.status(400).json({ message: "Days and activities are required" });
+    if (!days && !activities) {
+      console.log("❌ Error: No data provided for update");
+      return res.status(400).json({ message: "Days or activities are required" });
     }
-
-     // ✅ Validate that activities contain only strings
-     if (!activities || typeof activities !== "object") {
-      console.log("❌ Error: Invalid activities format");
-      return res.status(400).json({ message: "Activities must be an object with arrays of strings" });
-    }
-
-    // ✅ Convert all activity values to string arrays
-    Object.keys(activities).forEach((day) => {
-      if (!Array.isArray(activities[day])) {
-        activities[day] = [];
-      }
-      activities[day] = activities[day].map((a) => String(a)); // ✅ Ensure all activities are strings
-    });
 
     const trip = await Collaboration.findOne({ tripCode });
 
@@ -102,23 +105,77 @@ router.put('/update/:tripCode', verifyToken, async (req, res) => {
       return res.status(404).json({ message: "Trip not found" });
     }
 
-    // ✅ Update only if values exist
-    trip.days = days;
-    trip.activities = activities;
+    // ✅ Check if user is a member of this trip
+    if (!trip.members.includes(req.user.id)) {
+      console.log("❌ Error: User not authorized for trip", tripCode);
+      return res.status(403).json({ message: "You are not a member of this trip" });
+    }
+
+    // ✅ Sanitize and validate activities
+    let sanitizedActivities = trip.activities || {};
+    
+    if (activities) {
+      sanitizedActivities = {};
+      Object.keys(activities).forEach((day) => {
+        if (Array.isArray(activities[day])) {
+          sanitizedActivities[day] = activities[day]
+            .filter(activity => activity && typeof activity === 'string' && activity.trim() !== '')
+            .map(activity => String(activity).trim());
+        } else {
+          sanitizedActivities[day] = [];
+        }
+      });
+    }
+
+    // ✅ Update the trip
+    if (days) {
+      trip.days = days.filter(day => day && typeof day === 'string');
+    }
+    
+    trip.activities = sanitizedActivities;
+    
+    // ✅ Mark the field as modified for Mixed type
+    trip.markModified('activities');
+    
     await trip.save();
 
-    console.log("✅ Itinerary Updated Successfully:", trip);
-    req.app.get('io').emit('itineraryUpdated', { tripCode, days, activities });
+    console.log("✅ Itinerary Updated Successfully:", {
+      tripCode,
+      days: trip.days,
+      activities: trip.activities
+    });
+    
+    // ✅ Emit to specific trip room only
+    const io = req.app.get('io');
+    io.to(tripCode).emit('itineraryUpdated', { 
+      tripCode, 
+      days: trip.days, 
+      activities: trip.activities,
+      updatedBy: req.user.id 
+    });
 
-    res.json({ message: "Itinerary updated successfully!", days, activities });
+    res.json({ 
+      message: "Itinerary updated successfully!", 
+      days: trip.days, 
+      activities: trip.activities 
+    });
 
   } catch (error) {
     console.error("❌ Error in /update/:tripCode route:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("❌ Full error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    res.status(500).json({ 
+      message: "Server error", 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
-
+// Get all trips for user
 router.get('/', verifyToken, async (req, res) => {
   try {
     console.log("🔵 Fetching all collaboration trips for user:", req.user.id);
@@ -131,38 +188,56 @@ router.get('/', verifyToken, async (req, res) => {
 
     const currentDate = new Date();
 
-    const currentTrips = trips.filter(trip => new Date(trip.endDate) >= currentDate);
-    const pastTrips = trips.filter(trip => new Date(trip.endDate) < currentDate);
+    // Since collaboration trips don't have endDate, consider all as current
+    const currentTrips = trips;
+    const pastTrips = [];
 
-    console.log("✅ Collaboration Trips Categorized:", { currentTrips, pastTrips });
+    console.log("✅ Collaboration Trips Fetched:", { currentTrips, pastTrips });
 
     res.json({ currentTrips, pastTrips });
 
   } catch (error) {
     console.error("❌ Error fetching collaboration trips:", error);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-
-// ✅ Get Trip Details by tripCode (for joining & real-time sync)
+// Get Trip Details by tripCode
 router.get('/:tripCode', verifyToken, async (req, res) => {
   try {
     const { tripCode } = req.params;
+    console.log("🔵 Fetching trip details for code:", tripCode);
+    
     const trip = await Collaboration.findOne({ tripCode });
 
-    if (!trip) return res.status(404).json({ message: 'Trip not found' });
+    if (!trip) {
+      console.log("❌ Trip not found:", tripCode);
+      return res.status(404).json({ message: 'Trip not found' });
+    }
+
+    // ✅ Check if user is a member
+    if (!trip.members.includes(req.user.id)) {
+      console.log("❌ User not authorized for trip:", tripCode);
+      return res.status(403).json({ message: 'You are not a member of this trip' });
+    }
+
+    console.log("✅ Trip details fetched successfully:", {
+      tripCode,
+      tripName: trip.tripName,
+      memberCount: trip.members.length,
+      daysCount: trip.days?.length || 0
+    });
 
     res.json({
       tripName: trip.tripName,
       tripCode: trip.tripCode,
       members: trip.members,
-      days: trip.days, 
-      activities: trip.activities,
+      days: trip.days || [], 
+      activities: trip.activities || {},
     });
   } catch (error) {
-    console.error('Error fetching trip:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('❌ Error fetching trip details:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 

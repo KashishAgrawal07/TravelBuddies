@@ -5,13 +5,12 @@ import { useNavigate } from 'react-router-dom';
 
 const socket = io('http://localhost:5000', { transports: ['websocket', 'polling'] });
 
-
 const Collaboration = ({ mode, onClose }) => {
   const [tripCode, setTripCode] = useState('');
   const [tripName, setTripName] = useState('');
-  const [collabCreated, setCollabCreated] = useState(false); // To track if trip is created
+  const [collabCreated, setCollabCreated] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-
 
   useEffect(() => {
     // Listen for trip updates
@@ -28,12 +27,15 @@ const Collaboration = ({ mode, onClose }) => {
 
     return () => {
       socket.off("tripUpdated");
-      socket.off("userJoinedNotification"); // Clean up listener
+      socket.off("userJoinedNotification");
     };
   }, []);
 
   const handleSubmit = async () => {
+    if (isLoading) return; // Prevent multiple submissions
+    
     try {
+      setIsLoading(true);
       const token = localStorage.getItem("token");
   
       // ✅ Get user profile for username
@@ -45,6 +47,12 @@ const Collaboration = ({ mode, onClose }) => {
       console.log("✅ User Profile Fetched:", username);
   
       if (mode === 'create') {
+        if (!tripName.trim()) {
+          alert("Please enter a trip name.");
+          setIsLoading(false);
+          return;
+        }
+
         console.log("🟢 Creating collaboration for trip:", tripName);
   
         const response = await axios.post('http://localhost:5000/api/collaborations', { tripName }, {
@@ -57,17 +65,28 @@ const Collaboration = ({ mode, onClose }) => {
         setTripCode(createdTrip.tripCode);
         setCollabCreated(true);
   
+        // Navigate with proper state including empty days and activities for new collaboration
         navigate('/iternary', { 
           state: { 
             tripName: createdTrip.tripName, 
             tripCode: createdTrip.tripCode, 
-            isCollabActive: true 
+            isCollabActive: true,
+            days: [], // Initialize empty for new collaboration
+            activities: {} // Initialize empty for new collaboration
           } 
         });
   
         socket.emit('tripCreated', createdTrip);
+        onClose(); // Close modal after creating
   
       } else {
+        // Join mode
+        if (!tripCode.trim()) {
+          alert("Please enter a trip code.");
+          setIsLoading(false);
+          return;
+        }
+
         console.log("🟡 Joining trip with code:", tripCode);
   
         // ✅ Join the collaboration
@@ -83,35 +102,42 @@ const Collaboration = ({ mode, onClose }) => {
         });
   
         console.log("📌 Itinerary Fetched:", itineraryResponse.data);
+        
+        const fetchedData = itineraryResponse.data;
   
-        if (itineraryResponse.data.days && itineraryResponse.data.activities) {
-          setDays(itineraryResponse.data.days);
-          setActivities(itineraryResponse.data.activities);
-        } else {
-          console.warn("⚠️ No days or activities found in fetched itinerary.");
-        }
-  
+        // Navigate with fetched collaboration data
         navigate('/iternary', { 
           state: { 
-            tripName: itineraryResponse.data.tripName, 
-            tripCode: itineraryResponse.data.tripCode, 
-            isCollabActive: true 
+            tripName: fetchedData.tripName, 
+            tripCode: fetchedData.tripCode, 
+            isCollabActive: true,
+            days: fetchedData.days || [], // Pass fetched days
+            activities: fetchedData.activities || {}, // Pass fetched activities
+            destination: fetchedData.destination || '',
+            startDate: fetchedData.startDate || '',
+            endDate: fetchedData.endDate || ''
           } 
         });
   
         socket.emit('tripJoined', { tripCode, username });
-  
         onClose(); // ✅ Close modal after joining
       }
     } catch (error) {
       console.error("❌ Error in handleSubmit:", error.response?.data || error.message);
       alert(error.response?.data?.message || "Error processing request.");
+    } finally {
+      setIsLoading(false);
     }
   };
-  
+
+  const handleClose = () => {
+    if (!isLoading) {
+      onClose();
+    }
+  };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50">
+    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
       <div className="bg-white p-6 rounded-lg shadow-lg w-96">
         <h2 className="text-2xl font-semibold mb-4">
           {mode === 'create' ? 'Create a Collaboration' : 'Join a Collaboration'}
@@ -125,41 +151,76 @@ const Collaboration = ({ mode, onClose }) => {
               value={tripName}
               onChange={(e) => setTripName(e.target.value)}
               placeholder="Enter trip name"
-              className="w-full p-2 border rounded-md mb-4"
-              disabled={collabCreated} // Disable tripName input after creation
+              className="w-full p-3 border border-gray-300 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
             />
             {collabCreated && (
-              <input
-                type="text"
-                value={tripCode}
-                readOnly
-                className="w-full p-2 border rounded-md mb-4 bg-gray-200"
-              />
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Trip Code (Share this with others):
+                </label>
+                <input
+                  type="text"
+                  value={tripCode}
+                  readOnly
+                  className="w-full p-3 border border-gray-300 rounded-lg bg-gray-50 font-mono text-center text-lg font-semibold"
+                />
+              </div>
             )}
           </>
         ) : (
           <input
             type="text"
             value={tripCode}
-            onChange={(e) => setTripCode(e.target.value)}
+            onChange={(e) => setTripCode(e.target.value.trim())}
             placeholder="Enter trip code"
-            className="w-full p-2 border rounded-md mb-4"
+            className="w-full p-3 border border-gray-300 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500"
+            disabled={isLoading}
           />
         )}
 
         {/* Buttons */}
-        <div className="flex justify-between">
+        <div className="flex justify-between space-x-3">
           <button
             onClick={handleSubmit}
-            className={`px-4 py-2 rounded-md ${collabCreated ? 'bg-green-500' : 'bg-blue-500'} text-white`}
-            disabled={collabCreated} // Disable button after creation
+            disabled={isLoading || collabCreated}
+            className={`px-6 py-3 rounded-lg text-white font-semibold flex-1 transition-colors ${
+              collabCreated 
+                ? 'bg-green-500 cursor-default' 
+                : isLoading 
+                  ? 'bg-gray-400 cursor-not-allowed' 
+                  : 'bg-blue-500 hover:bg-blue-600'
+            }`}
           >
-            {collabCreated ? 'Created!' : (mode === 'create' ? 'Create' : 'Join')}
+            {isLoading 
+              ? 'Processing...' 
+              : collabCreated 
+                ? '✓ Created!' 
+                : (mode === 'create' ? 'Create' : 'Join')
+            }
           </button>
-          <button onClick={onClose} className="bg-gray-500 text-white px-4 py-2 rounded-md">
+          <button 
+            onClick={handleClose} 
+            disabled={isLoading}
+            className={`px-6 py-3 rounded-lg font-semibold transition-colors ${
+              isLoading 
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                : 'bg-gray-500 hover:bg-gray-600 text-white'
+            }`}
+          >
             {collabCreated ? 'Close' : 'Cancel'}
           </button>
         </div>
+
+        {/* Loading indicator */}
+        {isLoading && (
+          <div className="mt-4 text-center">
+            <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+            <p className="text-sm text-gray-600 mt-2">
+              {mode === 'create' ? 'Creating collaboration...' : 'Joining collaboration...'}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

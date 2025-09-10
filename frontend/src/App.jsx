@@ -5,7 +5,7 @@ import Register  from './pages/register';
 import Profile from './pages/Profile';
 import Home from './pages/Home';
 import Iternary from './pages/Iternary'
-
+import Expenses from './pages/Expenses';
 
 function App() {
  
@@ -18,6 +18,7 @@ function App() {
       <Route path="/profile" element={<Profile />} />
       <Route path="/" element={<Home />} />
       <Route path="/iternary" element={<Iternary />} />
+      <Route path="/expenses" element={<Expenses />} />
       </Routes>
     </Router>
   )
